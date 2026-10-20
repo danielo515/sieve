@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { GitDiffProvider } from '../../src/diff/git-diff.provider';
 import { RefType, Status, type Change, type Repository } from '../../src/git';
-import { reviewKey } from '../../src/diff/diff.model';
+import { reviewKey, type ChangedFile } from '../../src/diff/diff.model';
 
 const committedChange = change('/workspace/src/shared.ts', Status.INDEX_MODIFIED);
 const workingChange = change('/workspace/src/shared.ts', Status.UNTRACKED);
@@ -41,6 +41,8 @@ describe('GitDiffProvider comparisons', () => {
       ['src/shared.ts', 'Current changes'],
     ]);
     expect(reviewKey(files[0]!)).not.toBe(reviewKey(files[1]!));
+    // The file on disk holds the current changes, so the committed one is not it.
+    expect(files[0]!.targetMatchesDisk).toBeUndefined();
     expect(diffBetween).toHaveBeenCalledWith('base-sha', 'HEAD');
 
     diffBetween.mockClear();
@@ -157,6 +159,50 @@ describe('GitDiffProvider custom comparisons', () => {
 
     expect(repo.getRefs).toHaveBeenCalledWith({ sort: 'committerdate' });
     expect(refs.map(ref => ref.name)).toEqual(['feature', 'main']);
+  });
+});
+
+describe('GitDiffProvider committed files on disk', () => {
+  const unchanged = change('/workspace/src/unchanged.ts', Status.MODIFIED);
+  const edited = change('/workspace/src/edited.ts', Status.MODIFIED);
+  const renamedAway = change('/workspace/src/renamed.ts', Status.MODIFIED);
+  const removed = change('/workspace/src/removed.ts', Status.DELETED);
+  const committed = [unchanged, edited, renamedAway, removed];
+
+  function repoWithLocalChanges(): Repository {
+    const repo = fakeRepo({ diffBetween: vi.fn(async () => committed) });
+    Object.assign(repo.state, {
+      workingTreeChanges: [change('/workspace/src/edited.ts', Status.MODIFIED)],
+      indexChanges: [{
+        uri: { fsPath: '/workspace/src/moved.ts' },
+        originalUri: { fsPath: '/workspace/src/renamed.ts' },
+        renameUri: undefined,
+        status: Status.INDEX_RENAMED,
+      }],
+    });
+    return repo;
+  }
+
+  function filesOnDisk(files: readonly ChangedFile[]): string[] {
+    return files
+      .filter(file => file.source?.id !== 'working-tree' && file.targetMatchesDisk)
+      .map(file => file.relativePath);
+  }
+
+  it('opens branch changes as the real file when it has no local changes', async () => {
+    const files = await new GitDiffProvider(repoWithLocalChanges()).getChangedFiles();
+
+    expect(filesOnDisk(files)).toEqual(['src/unchanged.ts']);
+  });
+
+  it('opens a comparison against the checked-out branch as the real file', async () => {
+    const provider = new GitDiffProvider(repoWithLocalChanges());
+
+    await provider.setComparison('main...feature');
+    expect(filesOnDisk(await provider.getChangedFiles())).toEqual(['src/unchanged.ts']);
+
+    await provider.setComparison('main...release');
+    expect(filesOnDisk(await provider.getChangedFiles())).toEqual([]);
   });
 });
 

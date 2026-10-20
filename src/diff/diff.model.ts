@@ -51,6 +51,12 @@ export interface ChangedFile {
   readonly oldPath: string | undefined;
   /** Absent only in older persisted/test data; treated as current working-tree changes. */
   readonly source?: DiffSource;
+  /**
+   * The target revision of this file is exactly what is on disk, so it can open as
+   * the real file. Language servers ignore `git:` documents, so this is what gives
+   * committed changes hovers, go to definition, and diagnostics.
+   */
+  readonly targetMatchesDisk?: boolean;
 }
 
 export function reviewKey(file: ChangedFile): string {

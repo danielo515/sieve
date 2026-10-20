@@ -33,7 +33,7 @@ export async function openFileDiff(file: ChangedFile): Promise<void> {
 }
 
 export function targetDocumentUri(file: ChangedFile): vscode.Uri {
-  return file.source?.targetRef
+  return file.source?.targetRef && !file.targetMatchesDisk
     ? toGitUri(file.uri, file.source.targetRef)
     : vscode.Uri.file(file.uri);
 }

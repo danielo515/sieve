@@ -135,9 +135,25 @@ export class GitDiffProvider implements DiffProvider {
   }
 
   private _mapChanges(changes: readonly Change[], source: DiffSource): ChangedFile[] {
+    const localChanges = this._targetIsHead(source) ? this._locallyChangedPaths() : undefined;
     return changes
       .filter(change => change.status !== Status.IGNORED)
-      .map(change => this._mapChange(change, source));
+      .map(change => this._mapChange(change, source))
+      .map(file => localChanges && file.status !== 'deleted' && !localChanges.has(file.uri)
+        ? { ...file, targetMatchesDisk: true }
+        : file);
+  }
+
+  /** A checked-out target means its unchanged files are the ones on disk. */
+  private _targetIsHead(source: DiffSource): boolean {
+    return source.targetRef === 'HEAD' || source.targetRef === this._repo.state.HEAD?.name;
+  }
+
+  /** Paths whose file on disk differs from HEAD: staged, unstaged, untracked, or conflicted. */
+  private _locallyChangedPaths(): Set<string> {
+    const { indexChanges, workingTreeChanges, untrackedChanges = [], mergeChanges } = this._repo.state;
+    return new Set([...indexChanges, ...workingTreeChanges, ...untrackedChanges, ...mergeChanges]
+      .flatMap(change => [change.uri.fsPath, change.originalUri.fsPath]));
   }
 
   private _mapChange(change: Change, source: DiffSource): ChangedFile {
