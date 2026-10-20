@@ -57,7 +57,7 @@ function buildSession(context: vscode.ExtensionContext, gitAPI: GitAPI): SieveSe
   const treeProvider = new ReviewDeskProvider(() => repositories.all);
   const statusBar = new SieveStatusBar();
   const annotationController = new AnnotationController(treeProvider);
-  const languageForwarder = new LanguageForwarder(uri => treeProvider.getFileForDocument(uri)?.file);
+  const languageForwarder = new LanguageForwarder(uri => treeProvider.getFileForDocument(uri));
   const exportService = new ExportService(() => repositories.all);
 
   annotationController.setOnAnnotate(({ repository, file }) => {

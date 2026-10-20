@@ -1,21 +1,23 @@
 import * as vscode from 'vscode';
-import type { ChangedFile } from './diff.model';
+import type { ReviewFile } from '../review/review.repository';
 
 /** The Review Desk file a document shows, if any. */
-export type FileLookup = (uri: vscode.Uri) => ChangedFile | undefined;
+export type FileLookup = (uri: vscode.Uri) => ReviewFile | undefined;
 
 /**
  * Gives committed diffs hovers and go to definition.
  *
  * Sieve shows committed versions as `git:` documents, which most language servers
  * skip (VS Code's TypeScript extension disables the scheme outright). While a
- * committed version reads exactly like the file in the workspace, that file's
- * answers hold for it too, so requests are forwarded there.
+ * version committed on the checked-out branch reads exactly like the file in the
+ * workspace, requests are forwarded to that file. Its answers come from the
+ * workspace, so other files' local edits show through.
  */
 export class LanguageForwarder implements vscode.Disposable {
   /**
    * Requests this forwarder is putting to the other providers, so it can sit them
-   * out. Keyed by document and position: providers get no other context.
+   * out. Keyed by document and position, as providers get no other context: an
+   * identical request arriving meanwhile goes unanswered too.
    */
   private readonly _probing = new Set<string>();
   private readonly _registrations: vscode.Disposable[];
@@ -46,13 +48,16 @@ export class LanguageForwarder implements vscode.Disposable {
       this._probe(key, () => executeHovers(document.uri, position)),
       executeHovers(twin, position),
     ]);
-    // Providers that already serve `git:` documents (JSON, CSS, …) would answer twice.
-    const shown = new Set(native.flatMap(hover => hover.contents.map(markdownText)));
-    const contents = forwarded
-      .flatMap(hover => hover.contents)
-      .filter(content => !shown.has(markdownText(content)));
-    if (!contents.length) return undefined;
-    return new vscode.Hover(contents, forwarded.find(hover => hover.range)?.range);
+    // Providers that already serve `git:` documents (JSON, CSS, GitLens, …) would answer twice.
+    const shown = new Set(native.flatMap(hover => hover.contents.map(comparable)));
+    const kept = forwarded
+      .map(hover => ({
+        range: hover.range,
+        contents: hover.contents.filter(content => !shown.has(comparable(content))),
+      }))
+      .filter(hover => hover.contents.length);
+    if (!kept.length) return undefined;
+    return new vscode.Hover(kept.flatMap(hover => hover.contents), kept.find(hover => hover.range)?.range);
   }
 
   private async _definition(document: vscode.TextDocument, position: vscode.Position): Promise<vscode.LocationLink[] | undefined> {
@@ -67,14 +72,14 @@ export class LanguageForwarder implements vscode.Disposable {
     ]);
     // Native answers point into the `git:` document and forwarded ones into the
     // workspace, so they never match up; when the document has its own, keep those.
-    return native.length ? undefined : forwarded.map(toLocationLink);
+    return native.length ? undefined : forwarded.map(target => toLocationLink(target, twin, document.uri));
   }
 
   /** The workspace file this committed document reads exactly like, if any. */
   private async _workspaceTwin(document: vscode.TextDocument): Promise<vscode.Uri | undefined> {
-    const file = this._findFile(document.uri);
-    if (!file) return undefined;
-    const twin = vscode.Uri.file(file.uri);
+    const entry = this._findFile(document.uri);
+    if (!entry || !isCheckedOut(entry)) return undefined;
+    const twin = vscode.Uri.file(entry.file.uri);
     try {
       return sameText(document, await vscode.workspace.openTextDocument(twin)) ? twin : undefined;
     } catch {
@@ -93,6 +98,12 @@ export class LanguageForwarder implements vscode.Disposable {
   }
 }
 
+/** Only the checked-out commit shares the workspace's project; another target's imports differ. */
+function isCheckedOut({ repository, file }: ReviewFile): boolean {
+  const target = file.source?.targetRef;
+  return target === 'HEAD' || target === repository.git.state.HEAD?.name;
+}
+
 function requestKey(kind: string, document: vscode.TextDocument, position: vscode.Position): string {
   return `${kind} ${document.uri.toString()} ${position.line}:${position.character}`;
 }
@@ -102,12 +113,17 @@ function sameText(left: vscode.TextDocument, right: vscode.TextDocument): boolea
   return left.getText().replace(/\r\n/g, '\n') === right.getText().replace(/\r\n/g, '\n');
 }
 
-function markdownText(content: vscode.MarkdownString | vscode.MarkedString): string {
-  return typeof content === 'string' ? content : content.value;
+/** Hover text, minus command link arguments: those can name the document, which differs between the two. */
+function comparable(content: vscode.MarkdownString | vscode.MarkedString): string {
+  const text = typeof content === 'string' ? content : content.value;
+  return text.replace(/\]\(command:\S*/g, '](command:');
 }
 
-function toLocationLink(target: vscode.Location | vscode.LocationLink): vscode.LocationLink {
-  return 'targetUri' in target ? target : { targetUri: target.uri, targetRange: target.range };
+/** Definitions in the workspace file itself point back into the committed document, keeping navigation in the diff. */
+function toLocationLink(target: vscode.Location | vscode.LocationLink, twin: vscode.Uri, document: vscode.Uri): vscode.LocationLink {
+  const link = 'targetUri' in target ? target : { targetUri: target.uri, targetRange: target.range };
+  const inTwin = link.targetUri.scheme === twin.scheme && link.targetUri.fsPath === twin.fsPath;
+  return inTwin ? { ...link, targetUri: document } : link;
 }
 
 function executeHovers(uri: vscode.Uri, position: vscode.Position): Thenable<vscode.Hover[]> {
