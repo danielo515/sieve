@@ -45,9 +45,25 @@ export const workspaceFoldersChanged = new EventEmitter<void>();
 export const workspace: {
   workspaceFolders: WorkspaceFolder[] | undefined;
   onDidChangeWorkspaceFolders: EventEmitter<void>['event'];
+  openTextDocument(uri: unknown): Promise<unknown>;
 } = {
   workspaceFolders: undefined,
   onDidChangeWorkspaceFolders: workspaceFoldersChanged.event,
+  openTextDocument: async () => { throw new Error('No document'); },
+};
+
+export class Hover {
+  constructor(readonly contents: unknown[], readonly range?: unknown) {}
+}
+
+/** Tests spy on these to capture providers and answer commands. */
+export const languages = {
+  registerHoverProvider: (_selector: unknown, _provider: unknown): { dispose(): void } => new Disposable(() => {}),
+  registerDefinitionProvider: (_selector: unknown, _provider: unknown): { dispose(): void } => new Disposable(() => {}),
+};
+
+export const commands = {
+  executeCommand: async (_command: string, ..._args: unknown[]): Promise<unknown> => undefined,
 };
 
 export const window = {

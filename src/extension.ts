@@ -3,6 +3,7 @@ import type { GitExtension, API as GitAPI } from './git';
 import { ReviewDeskProvider } from './ui/review-desk.provider';
 import { SieveStatusBar } from './ui/status.bar';
 import { AnnotationController } from './annotations/annotation.controller';
+import { LanguageForwarder } from './diff/language.forwarder';
 import { ExportService } from './export/export.service';
 import { RepositoryTracker } from './review/repository.tracker';
 import { registerCommands } from './commands';
@@ -56,6 +57,7 @@ function buildSession(context: vscode.ExtensionContext, gitAPI: GitAPI): SieveSe
   const treeProvider = new ReviewDeskProvider(() => repositories.all);
   const statusBar = new SieveStatusBar();
   const annotationController = new AnnotationController(treeProvider);
+  const languageForwarder = new LanguageForwarder(uri => treeProvider.getFileForDocument(uri));
   const exportService = new ExportService(() => repositories.all);
 
   annotationController.setOnAnnotate(({ repository, file }) => {
@@ -95,7 +97,7 @@ function buildSession(context: vscode.ExtensionContext, gitAPI: GitAPI): SieveSe
 
   context.subscriptions.push(
     repositories, treeProvider, statusBar, treeView, annotationController,
-    debouncedGitRefresh, ...subscriptions,
+    languageForwarder, debouncedGitRefresh, ...subscriptions,
   );
 
   return {
